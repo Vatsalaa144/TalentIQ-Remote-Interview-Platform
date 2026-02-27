@@ -15,6 +15,11 @@ import useStreamClient from "../hooks/useStreamClient";
 import { StreamCall, StreamVideo } from "@stream-io/video-react-sdk";
 import VideoCallUI from "../components/VideoCallUI";
 
+import InterviewerCodePanel from "../components/InterviewerCodePanel";
+import AIChatbot from "../components/AIChatbot";
+
+import toast from "react-hot-toast";
+
 function SessionPage() {
   const navigate = useNavigate();
   const { id } = useParams();
@@ -38,51 +43,36 @@ function SessionPage() {
     isParticipant
   );
 
-  // find the problem data based on session problem title
   const problemData = session?.problem
     ? Object.values(PROBLEMS).find((p) => p.title === session.problem)
     : null;
 
   const [selectedLanguage, setSelectedLanguage] = useState("javascript");
-  const [code, setCode] = useState(problemData?.starterCode?.[selectedLanguage] || "");
+  const [code, setCode] = useState("");
 
   // auto-join session if user is not already a participant and not the host
   useEffect(() => {
     if (!session || !user || loadingSession) return;
     if (isHost || isParticipant) return;
-
     joinSessionMutation.mutate(id, { onSuccess: refetch });
-
-    // remove the joinSessionMutation, refetch from dependencies to avoid infinite loop
   }, [session, user, loadingSession, isHost, isParticipant, id]);
 
   // redirect the "participant" when session ends
   useEffect(() => {
     if (!session || loadingSession) return;
-
     if (session.status === "completed") navigate("/dashboard");
   }, [session, loadingSession, navigate]);
-
-  // update code when problem loads or changes
-  useEffect(() => {
-    if (problemData?.starterCode?.[selectedLanguage]) {
-      setCode(problemData.starterCode[selectedLanguage]);
-    }
-  }, [problemData, selectedLanguage]);
 
   const handleLanguageChange = (e) => {
     const newLang = e.target.value;
     setSelectedLanguage(newLang);
-    // use problem-specific starter code
-    const starterCode = problemData?.starterCode?.[newLang] || "";
-    setCode(starterCode);
+    setCode("");
     setOutput(null);
   };
 
   const handleRunCode = async () => {
     setIsRunning(true);
     setOutput(null);
-
     const result = await executeCode(selectedLanguage, code);
     setOutput(result);
     setIsRunning(false);
@@ -90,24 +80,33 @@ function SessionPage() {
 
   const handleEndSession = () => {
     if (confirm("Are you sure you want to end this session? All participants will be notified.")) {
-      // this will navigate the HOST to dashboard
       endSessionMutation.mutate(id, { onSuccess: () => navigate("/dashboard") });
     }
+  };
+
+  // Handle interviewer submitting a code prompt to the interviewee
+  const handleInterviewerSubmitCode = ({ code: promptCode, instructions }) => {
+    setCode(promptCode);
+    setOutput(null);
+    const msg = instructions
+      ? `Interviewer set a new task: "${instructions}"`
+      : "Interviewer loaded a new code task into your editor!";
+    toast.success(msg, { duration: 5000, icon: "💼" });
   };
 
   return (
     <div className="h-screen bg-base-100 flex flex-col">
       <Navbar />
 
-      <div className="flex-1">
+      <div className="flex-1 overflow-hidden">
         <PanelGroup direction="horizontal">
-          {/* LEFT PANEL - CODE EDITOR & PROBLEM DETAILS */}
+          {/* LEFT PANEL - PROBLEM + CODE EDITOR */}
           <Panel defaultSize={50} minSize={30}>
             <PanelGroup direction="vertical">
-              {/* PROBLEM DSC PANEL */}
-              <Panel defaultSize={50} minSize={20}>
+              {/* PROBLEM DESCRIPTION */}
+              <Panel defaultSize={45} minSize={20}>
                 <div className="h-full overflow-y-auto bg-base-200">
-                  {/* HEADER SECTION */}
+                  {/* Header */}
                   <div className="p-6 bg-base-100 border-b border-base-300">
                     <div className="flex items-start justify-between mb-3">
                       <div>
@@ -122,15 +121,14 @@ function SessionPage() {
                           {session?.participant ? 2 : 1}/2 participants
                         </p>
                       </div>
-
                       <div className="flex items-center gap-3">
                         <span
-                          className={`badge badge-lg ${getDifficultyBadgeClass(
-                            session?.difficulty
-                          )}`}
+                          className={`badge badge-lg ${getDifficultyBadgeClass(session?.difficulty)}`}
                         >
-                          {session?.difficulty.slice(0, 1).toUpperCase() +
-                            session?.difficulty.slice(1) || "Easy"}
+                          {session?.difficulty
+                            ? session.difficulty.slice(0, 1).toUpperCase() +
+                              session.difficulty.slice(1)
+                            : "Easy"}
                         </span>
                         {isHost && session?.status === "active" && (
                           <button
@@ -154,26 +152,21 @@ function SessionPage() {
                   </div>
 
                   <div className="p-6 space-y-6">
-                    {/* problem desc */}
                     {problemData?.description && (
                       <div className="bg-base-100 rounded-xl shadow-sm p-5 border border-base-300">
                         <h2 className="text-xl font-bold mb-4 text-base-content">Description</h2>
                         <div className="space-y-3 text-base leading-relaxed">
                           <p className="text-base-content/90">{problemData.description.text}</p>
                           {problemData.description.notes?.map((note, idx) => (
-                            <p key={idx} className="text-base-content/90">
-                              {note}
-                            </p>
+                            <p key={idx} className="text-base-content/90">{note}</p>
                           ))}
                         </div>
                       </div>
                     )}
 
-                    {/* examples section */}
                     {problemData?.examples && problemData.examples.length > 0 && (
                       <div className="bg-base-100 rounded-xl shadow-sm p-5 border border-base-300">
                         <h2 className="text-xl font-bold mb-4 text-base-content">Examples</h2>
-
                         <div className="space-y-4">
                           {problemData.examples.map((example, idx) => (
                             <div key={idx}>
@@ -183,15 +176,11 @@ function SessionPage() {
                               </div>
                               <div className="bg-base-200 rounded-lg p-4 font-mono text-sm space-y-1.5">
                                 <div className="flex gap-2">
-                                  <span className="text-primary font-bold min-w-[70px]">
-                                    Input:
-                                  </span>
+                                  <span className="text-primary font-bold min-w-[70px]">Input:</span>
                                   <span>{example.input}</span>
                                 </div>
                                 <div className="flex gap-2">
-                                  <span className="text-secondary font-bold min-w-[70px]">
-                                    Output:
-                                  </span>
+                                  <span className="text-secondary font-bold min-w-[70px]">Output:</span>
                                   <span>{example.output}</span>
                                 </div>
                                 {example.explanation && (
@@ -209,7 +198,6 @@ function SessionPage() {
                       </div>
                     )}
 
-                    {/* Constraints */}
                     {problemData?.constraints && problemData.constraints.length > 0 && (
                       <div className="bg-base-100 rounded-xl shadow-sm p-5 border border-base-300">
                         <h2 className="text-xl font-bold mb-4 text-base-content">Constraints</h2>
@@ -229,25 +217,34 @@ function SessionPage() {
 
               <PanelResizeHandle className="h-2 bg-base-300 hover:bg-primary transition-colors cursor-row-resize" />
 
-              <Panel defaultSize={50} minSize={20}>
-                <PanelGroup direction="vertical">
-                  <Panel defaultSize={70} minSize={30}>
-                    <CodeEditorPanel
-                      selectedLanguage={selectedLanguage}
-                      code={code}
-                      isRunning={isRunning}
-                      onLanguageChange={handleLanguageChange}
-                      onCodeChange={(value) => setCode(value)}
-                      onRunCode={handleRunCode}
-                    />
-                  </Panel>
+              {/* CODE EDITOR + OUTPUT + INTERVIEWER PROMPT */}
+              <Panel defaultSize={55} minSize={20}>
+                <div className="h-full flex flex-col">
+                  <PanelGroup direction="vertical">
+                    <Panel defaultSize={65} minSize={30}>
+                      <CodeEditorPanel
+                        selectedLanguage={selectedLanguage}
+                        code={code}
+                        isRunning={isRunning}
+                        onLanguageChange={handleLanguageChange}
+                        onCodeChange={(value) => setCode(value)}
+                        onRunCode={handleRunCode}
+                      />
+                    </Panel>
 
-                  <PanelResizeHandle className="h-2 bg-base-300 hover:bg-primary transition-colors cursor-row-resize" />
+                    <PanelResizeHandle className="h-2 bg-base-300 hover:bg-primary transition-colors cursor-row-resize" />
 
-                  <Panel defaultSize={30} minSize={15}>
-                    <OutputPanel output={output} />
-                  </Panel>
-                </PanelGroup>
+                    <Panel defaultSize={35} minSize={15}>
+                      <OutputPanel output={output} />
+                    </Panel>
+                  </PanelGroup>
+
+                  {/* Interviewer Code Prompt Panel — sits below the editor area */}
+                  <InterviewerCodePanel
+                    isHost={isHost}
+                    onSubmitCode={handleInterviewerSubmitCode}
+                  />
+                </div>
               </Panel>
             </PanelGroup>
           </Panel>
@@ -289,6 +286,13 @@ function SessionPage() {
           </Panel>
         </PanelGroup>
       </div>
+
+      {/* AI Chatbot — floating widget, available to everyone */}
+      <AIChatbot
+        currentCode={code}
+        problemTitle={session?.problem}
+        selectedLanguage={selectedLanguage}
+      />
     </div>
   );
 }
